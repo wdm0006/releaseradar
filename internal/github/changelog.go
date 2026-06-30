@@ -92,12 +92,23 @@ func ParseChangelogEntries(changelog, repo, fallbackDate string) []Release {
 				})
 			}
 
-			// Start new entry — version from group 1 (bracketed) or group 2 (unbracketed)
-			currentVersion = match[1]
-			if currentVersion == "" {
-				currentVersion = match[2]
+			// Version from group 1 (bracketed) or group 2 (unbracketed)
+			version := match[1]
+			if version == "" {
+				version = match[2]
 			}
-			currentVersion = strings.TrimSpace(currentVersion)
+			version = strings.TrimSpace(version)
+
+			// Skip "Unreleased" headers (Keep a Changelog convention); they are
+			// not real releases. Ignore the section's body until the next header.
+			if strings.EqualFold(version, "Unreleased") {
+				currentVersion = ""
+				currentBody = nil
+				continue
+			}
+
+			// Start new entry
+			currentVersion = version
 			currentBody = nil
 
 			dateStr := match[3]
