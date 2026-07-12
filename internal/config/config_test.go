@@ -9,6 +9,7 @@ import (
 func TestLoadEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
 
 	cfg, err := Load()
 	if err != nil {
@@ -22,6 +23,7 @@ func TestLoadEmpty(t *testing.T) {
 func TestAddRemoveRepo(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
 
 	cfg, _ := Load()
 
@@ -52,6 +54,7 @@ func TestAddRemoveRepo(t *testing.T) {
 func TestSaveLoad(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
 
 	cfg := &Config{Repos: []string{"python/cpython", "golang/go"}}
 	if err := cfg.Save(); err != nil {
@@ -79,6 +82,7 @@ func TestSaveLoad(t *testing.T) {
 func TestLoadCorruptFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
 
 	// Write corrupt JSON to XDG path
 	dir := configDir()
@@ -98,6 +102,7 @@ func TestLoadCorruptFile(t *testing.T) {
 func TestLoadLegacyPath(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
 
 	// Write to legacy path
 	legacyPath := filepath.Join(tmp, ".releaseradar.json")
