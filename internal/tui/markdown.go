@@ -5,9 +5,9 @@ import (
 	"github.com/charmbracelet/glamour/ansi"
 )
 
-func boolPtr(b bool) *bool    { return &b }
+func boolPtr(b bool) *bool       { return &b }
 func stringPtr(s string) *string { return &s }
-func uintPtr(u uint) *uint    { return &u }
+func uintPtr(u uint) *uint       { return &u }
 
 // appStyleConfig defines a custom glamour style matching the app's dark theme.
 var appStyleConfig = ansi.StyleConfig{
@@ -79,7 +79,7 @@ var appStyleConfig = ansi.StyleConfig{
 		IndentToken: stringPtr("│ "),
 	},
 	List: ansi.StyleList{
-		StyleBlock: ansi.StyleBlock{},
+		StyleBlock:  ansi.StyleBlock{},
 		LevelIndent: 2,
 	},
 	Item: ansi.StylePrimitive{
