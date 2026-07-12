@@ -90,6 +90,52 @@ func TestParseChangelogEntries_MultipleRecent(t *testing.T) {
 	}
 }
 
+func TestParseChangelogEntries_SkipsBracketedUnreleased(t *testing.T) {
+	changelog := "# Changelog\n\n## [Unreleased]\n\n- Work in progress\n- Not shipped yet\n\n## [1.2.3] - 2024-01-15\n\n- Fixed a bug\n\n## [1.2.2] - 2020-01-01\n\n- Old stuff\n"
+
+	entries := ParseChangelogEntries(changelog, "owner/repo", "")
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	for _, e := range entries {
+		if strings.EqualFold(e.Name, "Unreleased") {
+			t.Fatalf("did not expect an Unreleased entry, got %q", e.Name)
+		}
+	}
+	if entries[0].Name != "1.2.3" {
+		t.Errorf("expected first version 1.2.3, got %s", entries[0].Name)
+	}
+	if entries[0].PublishedAt != "2024-01-15T00:00:00Z" {
+		t.Errorf("expected date 2024-01-15T00:00:00Z, got %s", entries[0].PublishedAt)
+	}
+	if !strings.Contains(entries[0].Body, "Fixed a bug") {
+		t.Errorf("body missing expected content: %s", entries[0].Body)
+	}
+	if strings.Contains(entries[0].Body, "Work in progress") {
+		t.Errorf("Unreleased body leaked into entry: %s", entries[0].Body)
+	}
+	if entries[1].Name != "1.2.2" {
+		t.Errorf("expected second version 1.2.2, got %s", entries[1].Name)
+	}
+}
+
+func TestParseChangelogEntries_SkipsUnbracketedUnreleased(t *testing.T) {
+	changelog := "## Unreleased\n\n- Pending change\n\n## 1.0.0 - 2024-02-01\n\n- Initial release\n"
+
+	entries := ParseChangelogEntries(changelog, "test/repo", "")
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Name != "1.0.0" {
+		t.Errorf("expected version 1.0.0, got %s", entries[0].Name)
+	}
+	if strings.Contains(entries[0].Body, "Pending change") {
+		t.Errorf("Unreleased body leaked into entry: %s", entries[0].Body)
+	}
+}
+
 func TestParseChangelogEntries_AuthorIsChangelog(t *testing.T) {
 	today := time.Now().UTC().Format("2006-01-02")
 	changelog := "## [1.0.0] - " + today + "\n\n- Stuff\n"
