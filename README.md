@@ -63,7 +63,19 @@ releaseradar list
 
 ## Configuration
 
-Tracked repositories are stored in `~/.releaseradar.json`.
+Tracked repositories are stored as JSON in your OS config directory:
+
+- **Linux:** `$XDG_CONFIG_HOME/releaseradar/config.json` (defaults to `~/.config/releaseradar/config.json`)
+- **macOS:** `~/Library/Application Support/releaseradar/config.json`
+
+For backwards compatibility, `~/.releaseradar.json` is read as a legacy fallback when no config file exists at the path above. It is never written to — once you add or remove a repo, the config is saved to the location above and the legacy file is no longer used.
+
+Fetched releases are cached in your OS cache directory so the TUI starts instantly:
+
+- **Linux:** `$XDG_CACHE_HOME/releaseradar/cache.json` (defaults to `~/.cache/releaseradar/cache.json`)
+- **macOS:** `~/Library/Caches/releaseradar/cache.json`
+
+Use `releaseradar cache status` to inspect the cache and `releaseradar cache clear` to remove it.
 
 ## License
 
