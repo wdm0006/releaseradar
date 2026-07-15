@@ -99,9 +99,9 @@ func ParseChangelogEntries(changelog, repo, fallbackDate string) []Release {
 			}
 			version = strings.TrimSpace(version)
 
-			// Skip "Unreleased" headers (Keep a Changelog convention); they are
-			// not real releases. Ignore the section's body until the next header.
-			if strings.EqualFold(version, "Unreleased") {
+			// Skip headers that are not real releases. Ignore the section's body
+			// until the next header.
+			if strings.EqualFold(version, "Unreleased") || !strings.ContainsAny(version, "0123456789") {
 				currentVersion = ""
 				currentBody = nil
 				continue
