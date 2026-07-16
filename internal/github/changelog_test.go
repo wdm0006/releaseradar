@@ -136,6 +136,55 @@ func TestParseChangelogEntries_SkipsUnbracketedUnreleased(t *testing.T) {
 	}
 }
 
+func TestParseChangelogEntries_SkipsNonVersionHeaders(t *testing.T) {
+	tests := []struct {
+		name         string
+		changelog    string
+		wantVersion  string
+		wantBody     string
+		unwantedBody string
+	}{
+		{
+			name:        "non-version sections skipped",
+			changelog:   "## [1.2.0] - 2024-01-15\n\n- Shipped feature\n\n## Contributors\n\n- Alice\n\n## Acknowledgements\n\n- Community\n",
+			wantVersion: "1.2.0",
+			wantBody:    "Shipped feature",
+		},
+		{
+			name:        "digit-bearing version kept",
+			changelog:   "## 2024.1\n\n- Annual release\n",
+			wantVersion: "2024.1",
+			wantBody:    "Annual release",
+		},
+		{
+			name:         "skipped section body does not leak",
+			changelog:    "## v2.0.0\n\n- Release body\n\n## Some Note\n\n- Not release content\n",
+			wantVersion:  "2.0.0",
+			wantBody:     "Release body",
+			unwantedBody: "Not release content",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entries := ParseChangelogEntries(tt.changelog, "test/repo", "2024-01-01T00:00:00Z")
+
+			if len(entries) != 1 {
+				t.Fatalf("expected 1 entry, got %d", len(entries))
+			}
+			if entries[0].Name != tt.wantVersion {
+				t.Errorf("expected version %s, got %s", tt.wantVersion, entries[0].Name)
+			}
+			if !strings.Contains(entries[0].Body, tt.wantBody) {
+				t.Errorf("body missing %q: %s", tt.wantBody, entries[0].Body)
+			}
+			if tt.unwantedBody != "" && strings.Contains(entries[0].Body, tt.unwantedBody) {
+				t.Errorf("skipped section body leaked into entry: %s", entries[0].Body)
+			}
+		})
+	}
+}
+
 func TestParseChangelogEntries_AuthorIsChangelog(t *testing.T) {
 	today := time.Now().UTC().Format("2006-01-02")
 	changelog := "## [1.0.0] - " + today + "\n\n- Stuff\n"
