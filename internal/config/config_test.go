@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -90,12 +91,15 @@ func TestLoadCorruptFile(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 	os.WriteFile(path, []byte("not json"), 0644)
 
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() should not error on corrupt file: %v", err)
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should error on corrupt file")
 	}
-	if len(cfg.Repos) != 0 {
-		t.Fatalf("expected empty repos for corrupt file, got %v", cfg.Repos)
+	if !strings.Contains(err.Error(), "invalid config file") {
+		t.Fatalf("expected invalid config error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "not json") {
+		t.Fatalf("error exposes config contents: %v", err)
 	}
 }
 

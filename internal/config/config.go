@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -36,7 +37,8 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		// Fall back to legacy path
-		data, err = os.ReadFile(legacyConfigPath())
+		path = legacyConfigPath()
+		data, err = os.ReadFile(path)
 	}
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -47,7 +49,7 @@ func Load() (*Config, error) {
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return &Config{Repos: []string{}}, nil
+		return nil, fmt.Errorf("invalid config file %q: %w", path, err)
 	}
 	if cfg.Repos == nil {
 		cfg.Repos = []string{}
