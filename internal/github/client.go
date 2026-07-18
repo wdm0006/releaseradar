@@ -7,16 +7,27 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
+
+// requestTimeout bounds every GitHub API request so a stalled connection or
+// response cannot block the refresh fan-out (and cache warm) indefinitely.
+const requestTimeout = 30 * time.Second
 
 var (
 	clientOnce sync.Once
 	httpClient *http.Client
 	authToken  string
 	clientErr  error
+	// apiBaseURL is the production API origin; overridable in tests only.
+	apiBaseURL = "https://api.github.com/"
 )
 
 func ensureClient() error {
+	// Allow tests to inject an already-configured client, bypassing gh.
+	if httpClient != nil {
+		return clientErr
+	}
 	clientOnce.Do(func() {
 		cmd := exec.Command("gh", "auth", "token")
 		output, err := cmd.Output()
@@ -29,7 +40,7 @@ func ensureClient() error {
 			return
 		}
 		authToken = strings.TrimSpace(string(output))
-		httpClient = &http.Client{}
+		httpClient = &http.Client{Timeout: requestTimeout}
 	})
 	return clientErr
 }
@@ -40,8 +51,8 @@ func apiGet(pathOrURL string) ([]byte, http.Header, error) {
 	}
 
 	url := pathOrURL
-	if !strings.HasPrefix(url, "https://") {
-		url = "https://api.github.com/" + pathOrURL
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		url = apiBaseURL + pathOrURL
 	}
 
 	req, err := http.NewRequest("GET", url, nil)
