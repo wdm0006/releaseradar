@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -21,7 +22,15 @@ var (
 	clientErr  error
 	// apiBaseURL is the production API origin; overridable in tests only.
 	apiBaseURL = "https://api.github.com/"
+	// lookupEnv and ghAuthToken are the two token sources; overridable in tests
+	// only, so token selection can be exercised without a real gh binary.
+	lookupEnv   = os.Getenv
+	ghAuthToken = runGHAuthToken
 )
+
+func runGHAuthToken() ([]byte, error) {
+	return exec.Command("gh", "auth", "token").Output()
+}
 
 func ensureClient() error {
 	// Allow tests to inject an already-configured client, bypassing gh.
@@ -29,13 +38,17 @@ func ensureClient() error {
 		return clientErr
 	}
 	clientOnce.Do(func() {
-		cmd := exec.Command("gh", "auth", "token")
-		output, err := cmd.Output()
+		if token := strings.TrimSpace(lookupEnv("GITHUB_TOKEN")); token != "" {
+			authToken = token
+			httpClient = &http.Client{Timeout: requestTimeout}
+			return
+		}
+		output, err := ghAuthToken()
 		if err != nil {
 			if execErr, ok := err.(*exec.Error); ok && execErr.Err == exec.ErrNotFound {
-				clientErr = fmt.Errorf("GitHub CLI (gh) not found\n\nInstall it from: https://cli.github.com")
+				clientErr = fmt.Errorf("GitHub CLI (gh) not found\n\nInstall it from: https://cli.github.com, or set GITHUB_TOKEN")
 			} else {
-				clientErr = fmt.Errorf("not authenticated with GitHub CLI\n\nRun: gh auth login")
+				clientErr = fmt.Errorf("not authenticated with GitHub CLI\n\nRun: gh auth login, or set GITHUB_TOKEN")
 			}
 			return
 		}

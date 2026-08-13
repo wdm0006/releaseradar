@@ -30,8 +30,17 @@ go install github.com/wdm0006/releaseradar/cmd/releaseradar@latest
 
 ## Prerequisites
 
-- [GitHub CLI](https://cli.github.com) (`gh`) installed and authenticated
-- `OPENAI_API_KEY` environment variable (optional, for AI features)
+GitHub access needs a token from one of two sources, checked in this order:
+
+1. `GITHUB_TOKEN` environment variable — a personal access token with `public_repo`
+   (or `repo`, for private repositories). Use this for headless, container, and CI
+   environments. When it is set and non-empty, `gh` is not invoked at all.
+2. [GitHub CLI](https://cli.github.com) (`gh`) installed and authenticated — the
+   token is read from `gh auth token`. Used only when `GITHUB_TOKEN` is unset or empty.
+
+If both are available, `GITHUB_TOKEN` wins.
+
+`OPENAI_API_KEY` is optional and enables the AI summary and chat features.
 
 ## Usage
 
