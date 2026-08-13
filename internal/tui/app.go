@@ -264,11 +264,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repoAddedMsg:
 		m.showModal = false
-		m.cfg.AddRepo(msg.repo)
-		if err := m.cfg.Save(); err != nil {
+		staged := m.cfg.Clone()
+		staged.AddRepo(msg.repo)
+		if err := staged.Save(); err != nil {
 			m.status = fmt.Sprintf("Error saving config: %v", err)
 			return m, nil
 		}
+		m.cfg = staged
 		m.repos = m.repos.setRepoList(m.cfg.Repos)
 		p := &loadingProgress{total: int32(len(m.cfg.Repos))}
 		p.current.Store("")
@@ -278,11 +280,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fetchReleasesCmd(m.cfg.Repos, m.progress)
 
 	case repoRemovedMsg:
-		m.cfg.RemoveRepo(msg.repo)
-		if err := m.cfg.Save(); err != nil {
+		staged := m.cfg.Clone()
+		staged.RemoveRepo(msg.repo)
+		if err := staged.Save(); err != nil {
 			m.status = fmt.Sprintf("Error saving config: %v", err)
 			return m, nil
 		}
+		m.cfg = staged
 		m.repos = m.repos.setRepoList(m.cfg.Repos)
 		// Remove releases for this repo immediately
 		var kept []github.Release

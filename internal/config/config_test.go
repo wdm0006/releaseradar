@@ -120,3 +120,18 @@ func TestLoadLegacyPath(t *testing.T) {
 		t.Fatalf("expected legacy repo, got %v", cfg.Repos)
 	}
 }
+
+func TestCloneIsIndependent(t *testing.T) {
+	cfg := &Config{Repos: []string{"owner/one"}}
+	clone := cfg.Clone()
+
+	clone.AddRepo("owner/two")
+	clone.RemoveRepo("owner/one")
+
+	if len(cfg.Repos) != 1 || cfg.Repos[0] != "owner/one" {
+		t.Fatalf("original mutated through clone: %v", cfg.Repos)
+	}
+	if len(clone.Repos) != 1 || clone.Repos[0] != "owner/two" {
+		t.Fatalf("clone = %v, want only owner/two", clone.Repos)
+	}
+}
