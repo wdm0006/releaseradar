@@ -3,7 +3,6 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/wdm0006/releaseradar/internal/github"
@@ -50,45 +49,13 @@ var summarySchema = &respFormat{
 
 const summarySystemPrompt = `You are a helpful assistant that summarizes software release notes across multiple projects. Provide an ecosystem-level overview that tells the user what's happening NOW in the tools they care about. Focus on trends, major updates, and the overall state of the ecosystem. Be conversational and insightful - help them understand the big picture, not just individual changes.`
 
-func SummarizeReleases(releases []github.Release) (string, error) {
-	if len(releases) == 0 {
-		return "No releases to summarize.", nil
-	}
+// maxSummaryReleases is how many releases the summary prompt covers.
+const maxSummaryReleases = 15
 
-	// Get unique repos
-	repoSet := make(map[string]bool)
-	for _, r := range releases {
-		repoSet[r.Repo] = true
-	}
-	repos := make([]string, 0, len(repoSet))
-	for r := range repoSet {
-		repos = append(repos, r)
-	}
-	sort.Strings(repos)
+func buildSummaryPrompt(releases []github.Release) string {
+	repos, releaseTexts := releaseContext(releases, maxSummaryReleases)
 
-	// Prepare release texts (up to 15)
-	limit := 15
-	if limit > len(releases) {
-		limit = len(releases)
-	}
-	var releaseTexts []string
-	for _, r := range releases[:limit] {
-		name := r.Name
-		if name == "" {
-			name = r.TagName
-		}
-		published := ""
-		if len(r.PublishedAt) >= 10 {
-			published = r.PublishedAt[:10]
-		}
-		body := r.Body
-		if body == "" {
-			body = "No description"
-		}
-		releaseTexts = append(releaseTexts, fmt.Sprintf("**%s - %s** (%s)\n%s\n", r.Repo, name, published, body))
-	}
-
-	userPrompt := fmt.Sprintf(`You're tracking releases from %d repositories: %s
+	return fmt.Sprintf(`You're tracking releases from %d repositories: %s
 
 Here are the most recent releases across this ecosystem:
 
@@ -97,8 +64,14 @@ Here are the most recent releases across this ecosystem:
 Provide an ecosystem overview: What's happening NOW in these projects? What are the major trends, themes, or significant updates?
 Help the user understand what's going on in the tools they care about. Keep the summary under 250 words but be insightful.`,
 		len(repos), strings.Join(repos, ", "), strings.Join(releaseTexts, "\n"))
+}
 
-	content, err := callOpenAI(summarySystemPrompt, userPrompt, summarySchema)
+func SummarizeReleases(releases []github.Release) (string, error) {
+	if len(releases) == 0 {
+		return "No releases to summarize.", nil
+	}
+
+	content, err := callOpenAI(summarySystemPrompt, buildSummaryPrompt(releases), summarySchema)
 	if err != nil {
 		return "", err
 	}
