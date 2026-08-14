@@ -69,6 +69,14 @@ func (c *Config) Save() error {
 	return os.WriteFile(configPath(), data, 0644)
 }
 
+// Clone returns a deep copy so callers can stage a mutation and only adopt it
+// once the corresponding Save succeeds.
+func (c *Config) Clone() *Config {
+	repos := make([]string, len(c.Repos))
+	copy(repos, c.Repos)
+	return &Config{Repos: repos}
+}
+
 func (c *Config) AddRepo(repo string) bool {
 	for _, r := range c.Repos {
 		if r == repo {
