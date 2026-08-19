@@ -9,23 +9,35 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// setTestClient injects an already-configured client under clientMu, the same
+// lock ensureClient uses, so no test ever touches the guarded globals directly.
+func setTestClient(c *http.Client, token string) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	httpClient = c
+	authToken = token
+	clientErr = nil
+}
+
+// resetClientState returns the guarded globals to their uninitialized values.
+func resetClientState() {
+	setTestClient(nil, "")
+}
 
 // withTestServer points the package client at srv with a short per-request
 // timeout, bypassing gh, and resets every package global on cleanup so tests
 // stay isolated.
 func withTestServer(t *testing.T, srv *httptest.Server, timeout time.Duration) {
 	t.Helper()
-	httpClient = &http.Client{Timeout: timeout}
-	authToken = "test-token"
+	setTestClient(&http.Client{Timeout: timeout}, "test-token")
 	apiBaseURL = srv.URL + "/"
 	t.Cleanup(func() {
-		clientOnce = sync.Once{}
-		httpClient = nil
-		authToken = ""
-		clientErr = nil
+		resetClientState()
 		apiBaseURL = "https://api.github.com/"
 	})
 }
@@ -36,10 +48,7 @@ func withTestServer(t *testing.T, srv *httptest.Server, timeout time.Duration) {
 // on cleanup so tests stay isolated.
 func withTokenSources(t *testing.T, srv *httptest.Server, env string, gh func() ([]byte, error)) {
 	t.Helper()
-	clientOnce = sync.Once{}
-	httpClient = nil
-	authToken = ""
-	clientErr = nil
+	resetClientState()
 	if srv != nil {
 		apiBaseURL = srv.URL + "/"
 	}
@@ -51,10 +60,7 @@ func withTokenSources(t *testing.T, srv *httptest.Server, env string, gh func() 
 	}
 	ghAuthToken = gh
 	t.Cleanup(func() {
-		clientOnce = sync.Once{}
-		httpClient = nil
-		authToken = ""
-		clientErr = nil
+		resetClientState()
 		apiBaseURL = "https://api.github.com/"
 		lookupEnv = os.Getenv
 		ghAuthToken = runGHAuthToken
@@ -392,5 +398,65 @@ func TestFetchReleasesFollowsPagination(t *testing.T) {
 	}
 	if releases[0].Repo != "owner/repo" {
 		t.Fatalf("expected repo to be set, got %q", releases[0].Repo)
+	}
+}
+
+// TestAPIGetConcurrentFromUninitializedState drives several goroutines through
+// apiGet while the token source is still resolving, starting them at staggered
+// times so some arrive before initialization completes and some after. Nothing
+// orders the late arrivals against the goroutine that builds the client, so any
+// unsynchronized read of the package globals is reported by -race.
+func TestAPIGetConcurrentFromUninitializedState(t *testing.T) {
+	var mu sync.Mutex
+	var seenAuth []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seenAuth = append(seenAuth, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+
+	// The token source blocks, so goroutines starting later than initBlock find
+	// the client already built while earlier ones are still waiting on it.
+	const initBlock = 40 * time.Millisecond
+	var ghCalls int64
+	withTokenSources(t, srv, "", func() ([]byte, error) {
+		atomic.AddInt64(&ghCalls, 1)
+		time.Sleep(initBlock)
+		return []byte("stub-token\n"), nil
+	})
+
+	const goroutines = 8
+	errs := make([]error, goroutines)
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			time.Sleep(time.Duration(i) * 20 * time.Millisecond)
+			_, _, errs[i] = apiGet("repos/owner/repo/releases")
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, err)
+		}
+	}
+	if got := atomic.LoadInt64(&ghCalls); got != 1 {
+		t.Fatalf("expected the token source to run once, ran %d time(s)", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seenAuth) != goroutines {
+		t.Fatalf("expected %d requests, server saw %d", goroutines, len(seenAuth))
+	}
+	for i, auth := range seenAuth {
+		if auth != "Bearer stub-token" {
+			t.Fatalf("request %d carried %q, want %q", i, auth, "Bearer stub-token")
+		}
 	}
 }
