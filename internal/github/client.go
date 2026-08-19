@@ -16,7 +16,10 @@ import (
 const requestTimeout = 30 * time.Second
 
 var (
-	clientOnce sync.Once
+	// clientMu guards httpClient, authToken and clientErr. Every read and write
+	// of those three goes through it, so a caller that finds the client already
+	// built is ordered against the goroutine that built it.
+	clientMu   sync.Mutex
 	httpClient *http.Client
 	authToken  string
 	clientErr  error
@@ -32,34 +35,41 @@ func runGHAuthToken() ([]byte, error) {
 	return exec.Command("gh", "auth", "token").Output()
 }
 
-func ensureClient() error {
-	// Allow tests to inject an already-configured client, bypassing gh.
-	if httpClient != nil {
-		return clientErr
+// ensureClient resolves the bearer token and HTTP client once and returns them
+// to the caller. Callers must use the returned values rather than reading the
+// package globals, which are only valid while clientMu is held.
+func ensureClient() (*http.Client, string, error) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+
+	if httpClient != nil || clientErr != nil {
+		return httpClient, authToken, clientErr
 	}
-	clientOnce.Do(func() {
-		if token := strings.TrimSpace(lookupEnv("GITHUB_TOKEN")); token != "" {
-			authToken = token
-			httpClient = &http.Client{Timeout: requestTimeout}
-			return
-		}
-		output, err := ghAuthToken()
-		if err != nil {
-			if execErr, ok := err.(*exec.Error); ok && execErr.Err == exec.ErrNotFound {
-				clientErr = fmt.Errorf("GitHub CLI (gh) not found\n\nInstall it from: https://cli.github.com, or set GITHUB_TOKEN")
-			} else {
-				clientErr = fmt.Errorf("not authenticated with GitHub CLI\n\nRun: gh auth login, or set GITHUB_TOKEN")
-			}
-			return
-		}
-		authToken = strings.TrimSpace(string(output))
+
+	if token := strings.TrimSpace(lookupEnv("GITHUB_TOKEN")); token != "" {
+		authToken = token
 		httpClient = &http.Client{Timeout: requestTimeout}
-	})
-	return clientErr
+		return httpClient, authToken, nil
+	}
+
+	output, err := ghAuthToken()
+	if err != nil {
+		if execErr, ok := err.(*exec.Error); ok && execErr.Err == exec.ErrNotFound {
+			clientErr = fmt.Errorf("GitHub CLI (gh) not found\n\nInstall it from: https://cli.github.com, or set GITHUB_TOKEN")
+		} else {
+			clientErr = fmt.Errorf("not authenticated with GitHub CLI\n\nRun: gh auth login, or set GITHUB_TOKEN")
+		}
+		return nil, "", clientErr
+	}
+
+	authToken = strings.TrimSpace(string(output))
+	httpClient = &http.Client{Timeout: requestTimeout}
+	return httpClient, authToken, nil
 }
 
 func apiGet(pathOrURL string) ([]byte, http.Header, error) {
-	if err := ensureClient(); err != nil {
+	client, token, err := ensureClient()
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -72,10 +82,10 @@ func apiGet(pathOrURL string) ([]byte, http.Header, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+authToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("request failed: %w", err)
 	}
