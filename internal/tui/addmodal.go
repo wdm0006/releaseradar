@@ -1,10 +1,10 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/wdm0006/releaseradar/internal/github"
 )
 
 type addModalModel struct {
@@ -12,6 +12,7 @@ type addModalModel struct {
 	submitted bool
 	cancelled bool
 	value     string
+	errMsg    string
 	width     int
 	height    int
 }
@@ -43,16 +44,20 @@ func (m addModalModel) Update(msg tea.Msg) (addModalModel, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyEnter:
-			val := strings.TrimSpace(m.input.Value())
-			if val != "" && strings.Contains(val, "/") {
-				m.submitted = true
-				m.value = val
+			repo, err := github.ParseRepo(m.input.Value())
+			if err != nil {
+				m.errMsg = err.Error()
+				return m, nil
 			}
+			m.errMsg = ""
+			m.submitted = true
+			m.value = repo
 			return m, nil
 		case tea.KeyEsc:
 			m.cancelled = true
 			return m, nil
 		}
+		m.errMsg = ""
 	}
 
 	var cmd tea.Cmd
@@ -61,9 +66,13 @@ func (m addModalModel) Update(msg tea.Msg) (addModalModel, tea.Cmd) {
 }
 
 func (m addModalModel) View() string {
-	return sectionHeaderStyle.Render("Add Repository") + "\n\n" +
+	body := sectionHeaderStyle.Render("Add Repository") + "\n\n" +
 		mutedStyle.Render("Format: owner/repo") + "\n\n" +
-		m.input.View() + "\n\n" +
+		m.input.View() + "\n\n"
+	if m.errMsg != "" {
+		body += lipgloss.NewStyle().Foreground(colorError).Width(48).Render(m.errMsg) + "\n\n"
+	}
+	return body +
 		helpKeyStyle.Render("enter") + helpDescStyle.Render(" add  ") +
 		helpKeyStyle.Render("esc") + helpDescStyle.Render(" cancel")
 }
