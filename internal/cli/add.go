@@ -2,10 +2,10 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/wdm0006/releaseradar/internal/config"
+	"github.com/wdm0006/releaseradar/internal/github"
 )
 
 var addCmd = &cobra.Command{
@@ -13,9 +13,9 @@ var addCmd = &cobra.Command{
 	Short: "Add a repository to track",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		repo := args[0]
-		if !strings.Contains(repo, "/") {
-			return fmt.Errorf("invalid format: use owner/repo")
+		repo, err := github.ParseRepo(args[0])
+		if err != nil {
+			return err
 		}
 
 		cfg, err := config.Load()
