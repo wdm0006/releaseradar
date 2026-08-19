@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -219,19 +220,83 @@ func TestAPIGetSendsBearerToken(t *testing.T) {
 }
 
 func TestAPIGetErrorMapping(t *testing.T) {
+	resetAt := time.Now().Add(37 * time.Minute).Truncate(time.Second)
+	resetHeader := strconv.FormatInt(resetAt.Unix(), 10)
+
 	tests := []struct {
 		name    string
 		status  int
+		headers map[string]string
 		wantSub string
 	}{
-		{"not found", http.StatusNotFound, "not found"},
-		{"unauthorized", http.StatusUnauthorized, "authentication failed"},
-		{"forbidden", http.StatusForbidden, "authentication failed"},
-		{"server error", http.StatusInternalServerError, "GitHub API error 500"},
+		{
+			name:    "not found",
+			status:  http.StatusNotFound,
+			wantSub: "not found",
+		},
+		{
+			name:    "unauthorized",
+			status:  http.StatusUnauthorized,
+			wantSub: "authentication failed",
+		},
+		{
+			name:    "primary rate limit names the reset time",
+			status:  http.StatusForbidden,
+			headers: map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": resetHeader},
+			wantSub: "GitHub API rate limit exceeded; resets at " + resetAt.Local().Format("15:04"),
+		},
+		{
+			name:    "primary rate limit with an unusable reset header",
+			status:  http.StatusForbidden,
+			headers: map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "soon"},
+			wantSub: "GitHub API rate limit exceeded; try again later",
+		},
+		{
+			name:    "primary rate limit on 429",
+			status:  http.StatusTooManyRequests,
+			headers: map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": resetHeader},
+			wantSub: "GitHub API rate limit exceeded; resets at " + resetAt.Local().Format("15:04"),
+		},
+		{
+			name:    "secondary rate limit names the retry delay",
+			status:  http.StatusForbidden,
+			headers: map[string]string{"Retry-After": "90"},
+			wantSub: "GitHub API rate limit exceeded; retry after 1m30s",
+		},
+		{
+			name:    "secondary rate limit with an unusable retry-after header",
+			status:  http.StatusForbidden,
+			headers: map[string]string{"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"},
+			wantSub: "GitHub API rate limit exceeded; try again later",
+		},
+		{
+			name:    "rate limited with no headers at all",
+			status:  http.StatusTooManyRequests,
+			wantSub: "GitHub API rate limit exceeded; try again later",
+		},
+		{
+			name:    "forbidden without rate-limit headers is an access error",
+			status:  http.StatusForbidden,
+			headers: map[string]string{"X-RateLimit-Remaining": "4999"},
+			wantSub: "access denied",
+		},
+		{
+			name:    "forbidden with no headers at all is an access error",
+			status:  http.StatusForbidden,
+			wantSub: "access denied",
+		},
+		{
+			name:    "server error",
+			status:  http.StatusInternalServerError,
+			wantSub: "GitHub API error 500",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for k, v := range tc.headers {
+					w.Header().Set(k, v)
+				}
 				w.WriteHeader(tc.status)
 			}))
 			defer srv.Close()
@@ -244,7 +309,46 @@ func TestAPIGetErrorMapping(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.wantSub) {
 				t.Fatalf("status %d: expected error containing %q, got %q", tc.status, tc.wantSub, err.Error())
 			}
+			// Only a 401 means the credential itself is the problem; 403 and 429
+			// must never send the user off to re-authenticate.
+			if tc.status != http.StatusUnauthorized && strings.Contains(err.Error(), "gh auth login") {
+				t.Fatalf("status %d: error told the user to re-authenticate: %q", tc.status, err.Error())
+			}
 		})
+	}
+}
+
+// TestAPIGetRateLimitResetTracksHeader pins the reset time to the served
+// x-ratelimit-reset value: changing the header must change the message.
+func TestAPIGetRateLimitResetTracksHeader(t *testing.T) {
+	var reset time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	withTestServer(t, srv, time.Second)
+
+	messages := make([]string, 0, 2)
+	resets := []time.Time{
+		time.Now().Add(11 * time.Minute).Truncate(time.Second),
+		time.Now().Add(53 * time.Minute).Truncate(time.Second),
+	}
+	for _, r := range resets {
+		reset = r
+		_, _, err := apiGet("repos/owner/repo/releases")
+		if err == nil {
+			t.Fatal("expected a rate-limit error")
+		}
+		want := "resets at " + r.Local().Format("15:04")
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error containing %q, got %q", want, err.Error())
+		}
+		messages = append(messages, err.Error())
+	}
+	if messages[0] == messages[1] {
+		t.Fatalf("reset time is not rendered from the header: both responses gave %q", messages[0])
 	}
 }
 
