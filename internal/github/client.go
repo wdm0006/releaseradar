@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -87,17 +88,46 @@ func apiGet(pathOrURL string) ([]byte, http.Header, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		switch resp.StatusCode {
-		case 404:
-			return nil, nil, fmt.Errorf("not found")
-		case 401, 403:
-			return nil, nil, fmt.Errorf("authentication failed\n\nRun: gh auth login")
-		default:
-			return nil, nil, fmt.Errorf("GitHub API error %d", resp.StatusCode)
-		}
+		return nil, nil, classifyAPIError(resp.StatusCode, resp.Header)
 	}
 
 	return body, resp.Header, nil
+}
+
+// rateLimitMsg prefixes every rate-limit error; callers append the reset time
+// or retry delay when GitHub supplied one.
+const rateLimitMsg = "GitHub API rate limit exceeded"
+
+// classifyAPIError maps a non-200 GitHub response onto a specific cause. GitHub
+// returns 403 for primary rate limiting (x-ratelimit-remaining: 0), secondary
+// rate limiting (retry-after) and inaccessible repositories alike, so only 401
+// is reported as an authentication failure.
+func classifyAPIError(status int, header http.Header) error {
+	switch status {
+	case http.StatusNotFound:
+		return fmt.Errorf("not found")
+	case http.StatusUnauthorized:
+		return fmt.Errorf("authentication failed\n\nRun: gh auth login")
+	case http.StatusForbidden, http.StatusTooManyRequests:
+		if header.Get("X-RateLimit-Remaining") == "0" {
+			if reset, err := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+				return fmt.Errorf("%s; resets at %s", rateLimitMsg, time.Unix(reset, 0).Local().Format("15:04"))
+			}
+			return fmt.Errorf("%s; try again later", rateLimitMsg)
+		}
+		if retry := header.Get("Retry-After"); retry != "" {
+			if secs, err := strconv.Atoi(retry); err == nil {
+				return fmt.Errorf("%s; retry after %s", rateLimitMsg, time.Duration(secs)*time.Second)
+			}
+			return fmt.Errorf("%s; try again later", rateLimitMsg)
+		}
+		if status == http.StatusTooManyRequests {
+			return fmt.Errorf("%s; try again later", rateLimitMsg)
+		}
+		return fmt.Errorf("access denied - the repository may be private or the token lacks the required scope")
+	default:
+		return fmt.Errorf("GitHub API error %d", status)
+	}
 }
 
 func nextPageURL(header http.Header) string {
