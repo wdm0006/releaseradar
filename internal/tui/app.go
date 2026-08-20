@@ -664,30 +664,14 @@ func fetchReleasesCmd(repos []string, progress *loadingProgress) tea.Cmd {
 
 				progress.current.Store(r)
 
-				releases, err := github.FetchReleases(r)
-				if err != nil {
-					// Changelog fallback only when releases API fails
-					changelog, clErr := github.FetchChangelog(r)
-					if clErr == nil && changelog != "" {
-						fallbackDate, _ := github.FetchChangelogCommitDate(r)
-						entries := github.ParseChangelogEntries(changelog, r, fallbackDate)
-						if len(entries) > 0 {
-							mu.Lock()
-							results[idx] = result{releases: entries}
-							mu.Unlock()
-							progress.done.Add(1)
-							return
-						}
-					}
-					mu.Lock()
-					results[idx] = result{err: err.Error()}
-					mu.Unlock()
-					progress.done.Add(1)
-					return
-				}
+				releases, err := github.FetchReleasesWithFallback(r)
 
 				mu.Lock()
-				results[idx] = result{releases: releases}
+				if err != nil {
+					results[idx] = result{err: err.Error()}
+				} else {
+					results[idx] = result{releases: releases}
+				}
 				mu.Unlock()
 				progress.done.Add(1)
 			}(i, repo)

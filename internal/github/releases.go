@@ -46,3 +46,33 @@ func FetchReleases(repo string) ([]Release, error) {
 
 	return allReleases, nil
 }
+
+// FetchReleasesWithFallback fetches a repository's published releases and falls
+// back to its changelog when there are none to show. GitHub answers a repository
+// with no published releases with 200 and an empty array, so an empty successful
+// response is as much a reason to look for a CHANGELOG as a failed request is.
+//
+// A parseable changelog wins in both cases. Otherwise a genuinely empty
+// repository stays a successful zero-release fetch, and a failed Releases
+// request keeps reporting its own error.
+func FetchReleasesWithFallback(repo string) ([]Release, error) {
+	releases, err := FetchReleases(repo)
+	if err == nil && len(releases) > 0 {
+		return releases, nil
+	}
+
+	if entries := fetchChangelogReleases(repo); len(entries) > 0 {
+		return entries, nil
+	}
+
+	return releases, err
+}
+
+func fetchChangelogReleases(repo string) []Release {
+	changelog, err := FetchChangelog(repo)
+	if err != nil || changelog == "" {
+		return nil
+	}
+	fallbackDate, _ := FetchChangelogCommitDate(repo)
+	return ParseChangelogEntries(changelog, repo, fallbackDate)
+}
