@@ -97,34 +97,22 @@ var cacheWarmCmd = &cobra.Command{
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				releases, err := github.FetchReleases(r)
-				if err != nil {
-					changelog, clErr := github.FetchChangelog(r)
-					if clErr == nil && changelog != "" {
-						fallbackDate, _ := github.FetchChangelogCommitDate(r)
-						entries := github.ParseChangelogEntries(changelog, r, fallbackDate)
-						if len(entries) > 0 {
-							mu.Lock()
-							results[idx] = result{releases: entries}
-							mu.Unlock()
-							n := done.Add(1)
-							fmt.Printf("  [%d/%d] %s (%d releases)\n", n, len(cfg.Repos), r, len(entries))
-							return
-						}
-					}
-					mu.Lock()
-					results[idx] = result{err: err.Error()}
-					mu.Unlock()
-					n := done.Add(1)
-					fmt.Printf("  [%d/%d] %s (error: %s)\n", n, len(cfg.Repos), r, err)
-					return
-				}
+				releases, err := github.FetchReleasesWithFallback(r)
 
 				mu.Lock()
-				results[idx] = result{releases: releases}
+				if err != nil {
+					results[idx] = result{err: err.Error()}
+				} else {
+					results[idx] = result{releases: releases}
+				}
 				mu.Unlock()
+
 				n := done.Add(1)
-				fmt.Printf("  [%d/%d] %s (%d releases)\n", n, len(cfg.Repos), r, len(releases))
+				if err != nil {
+					fmt.Printf("  [%d/%d] %s (error: %s)\n", n, len(cfg.Repos), r, err)
+				} else {
+					fmt.Printf("  [%d/%d] %s (%d releases)\n", n, len(cfg.Repos), r, len(releases))
+				}
 			}(i, repo)
 		}
 		wg.Wait()
