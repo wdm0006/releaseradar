@@ -20,7 +20,7 @@ type releasesModel struct {
 	detail           viewport.Model
 	allReleases      []github.Release
 	filteredReleases []github.Release
-	renderedDetail   []string
+	renderedDetail   map[releaseDetailKey]string
 	renderer         *glamour.TermRenderer
 	width            int
 	height           int
@@ -30,6 +30,11 @@ type releasesModel struct {
 	filtering  bool
 	filterText string
 	lastViewed time.Time
+}
+
+type releaseDetailKey struct {
+	repo string
+	tag  string
 }
 
 func newReleasesModel() releasesModel {
@@ -119,6 +124,7 @@ func (m releasesModel) setSize(w, h int) releasesModel {
 	m.detail.Height = h - 2
 
 	m.renderer = newMarkdownRenderer(detailContent - 4)
+	m.renderedDetail = make(map[releaseDetailKey]string)
 	m.filter.Width = tableContent - 10
 
 	m = m.rebuildTable()
@@ -127,6 +133,7 @@ func (m releasesModel) setSize(w, h int) releasesModel {
 
 func (m releasesModel) setReleases(releases []github.Release) releasesModel {
 	m.allReleases = releases
+	m.renderedDetail = make(map[releaseDetailKey]string)
 	m = m.applyFilter()
 	return m
 }
@@ -181,22 +188,36 @@ func (m releasesModel) rebuildTable() releasesModel {
 	}
 	m.table.SetRows(rows)
 
-	m.renderedDetail = make([]string, len(m.filteredReleases))
-	for i, r := range m.filteredReleases {
-		m.renderedDetail[i] = renderReleaseDetail(r, m.renderer, m.detail.Width)
-	}
-
 	if len(m.filteredReleases) > 0 {
 		cursor := m.table.Cursor()
-		if cursor < 0 || cursor >= len(m.renderedDetail) {
+		if cursor < 0 || cursor >= len(m.filteredReleases) {
 			cursor = 0
 		}
-		m.detail.SetContent(m.renderedDetail[cursor])
+		m.detail.SetContent(m.detailAt(cursor))
 	} else {
 		m.detail.SetContent("")
 	}
 
 	return m
+}
+
+func (m releasesModel) detailAt(i int) string {
+	if i < 0 || i >= len(m.filteredReleases) {
+		return ""
+	}
+
+	r := m.filteredReleases[i]
+	key := releaseDetailKey{repo: r.Repo, tag: r.TagName}
+	if detail, ok := m.renderedDetail[key]; ok {
+		return detail
+	}
+
+	if m.renderedDetail == nil {
+		m.renderedDetail = make(map[releaseDetailKey]string)
+	}
+	detail := renderReleaseDetail(r, m.renderer, m.detail.Width)
+	m.renderedDetail[key] = detail
+	return detail
 }
 
 func (m releasesModel) selectedRelease() *github.Release {
@@ -266,8 +287,8 @@ func (m releasesModel) Update(msg tea.Msg) (releasesModel, tea.Cmd) {
 	}
 
 	cursor := m.table.Cursor()
-	if cursor != prevCursor && cursor >= 0 && cursor < len(m.renderedDetail) {
-		m.detail.SetContent(m.renderedDetail[cursor])
+	if cursor != prevCursor && cursor >= 0 && cursor < len(m.filteredReleases) {
+		m.detail.SetContent(m.detailAt(cursor))
 		m.detail.GotoTop()
 	}
 
