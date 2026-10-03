@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	tea "github.com/charmbracelet/bubbletea"
 	"os"
 	"path/filepath"
 	"strings"
@@ -256,5 +257,113 @@ func TestRepoInfoErrorShownInsteadOfLoading(t *testing.T) {
 	m = updateModel(t, m, repoInfoLoadedMsg{repo: "a/one", info: github.RepoInfo{Description: "desc"}})
 	if got := selectedDetail(m); strings.Contains(got, "not found") || !strings.Contains(got, "desc") {
 		t.Errorf("success did not clear error:\n%s", got)
+	}
+}
+
+func inputTestModel(t *testing.T, tab tabID) Model {
+	t.Helper()
+	t.Setenv("RELEASERADAR_START_TAB", "")
+	m := newTestModel([]string{"wdm0006/releaseradar"}, []github.Release{
+		{Repo: "wdm0006/releaseradar", TagName: "v1", Name: "sqlite3"},
+	})
+	m = updateModel(t, m, tea.WindowSizeMsg{Width: 150, Height: 40})
+	m.activeTab = tab
+	m.focusTab()
+	if tab != tabChat {
+		m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	}
+	return m
+}
+
+func assertNoQuit(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); ok {
+		t.Fatal("typing returned a quit command")
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			assertNoQuit(t, child)
+		}
+	}
+}
+
+func TestFocusedInputOwnsPrintableKeys(t *testing.T) {
+	for _, tc := range []struct {
+		tab  tabID
+		text string
+	}{
+		{tabReleases, "sqlite3"},
+		{tabChat, "any breaking changes in v2.0?"},
+		{tabRepos, "radar"},
+		{tabReleases, "qradxs1234[]"},
+		{tabRepos, "qradxs1234[]"},
+		{tabChat, "qradxs1234[]"},
+	} {
+		t.Run(tabNames[tc.tab], func(t *testing.T) {
+			m := inputTestModel(t, tc.tab)
+			for _, r := range tc.text {
+				next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+				m = next.(Model)
+				// Repository commands may fetch metadata; the Releases journey
+				// is sufficient to check the reported accidental quit.
+				if tc.tab == tabReleases {
+					assertNoQuit(t, cmd)
+				}
+			}
+			var got string
+			switch tc.tab {
+			case tabReleases:
+				got = m.releases.filterText
+			case tabChat:
+				got = m.chat.input.Value()
+			case tabRepos:
+				got = m.repos.list.FilterValue()
+			}
+			if got != tc.text {
+				t.Errorf("input = %q, want %q", got, tc.text)
+			}
+			if m.activeTab != tc.tab {
+				t.Errorf("active tab = %v, want %v", m.activeTab, tc.tab)
+			}
+			if m.showModal || m.status == "Refreshing..." || m.confirmRemove != "" {
+				t.Errorf("typing triggered a global action: modal=%v status=%q remove=%q", m.showModal, m.status, m.confirmRemove)
+			}
+		})
+	}
+}
+
+func TestFocusedInputEscapeKeys(t *testing.T) {
+	for _, tab := range []tabID{tabReleases, tabRepos, tabChat} {
+		t.Run(tabNames[tab], func(t *testing.T) {
+			m := inputTestModel(t, tab)
+			next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+			if cmd == nil {
+				t.Fatal("ctrl+c returned no quit command")
+			}
+			if _, ok := cmd().(tea.QuitMsg); !ok {
+				t.Fatal("ctrl+c did not quit")
+			}
+			if next.(Model).activeTab != tab {
+				t.Fatal("ctrl+c switched tabs")
+			}
+			m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+			want := (tab - 1 + tabID(len(tabNames))) % tabID(len(tabNames))
+			if m.activeTab != want {
+				t.Fatalf("shift+tab selected %v, want %v", m.activeTab, want)
+			}
+		})
+	}
+}
+
+func TestReleasesFilterEscapeClearsInput(t *testing.T) {
+	m := inputTestModel(t, tabReleases)
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.releases.filterText != "" || m.releases.filtering {
+		t.Fatalf("esc left filter text=%q filtering=%v", m.releases.filterText, m.releases.filtering)
 	}
 }

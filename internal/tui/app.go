@@ -86,9 +86,12 @@ type loadingProgress struct {
 	current atomic.Value // stores string
 }
 
+type fetchFunc func(repo string) ([]github.Release, error)
+
 // Model is the top-level Bubble Tea model
 type Model struct {
 	cfg       *config.Config
+	fetch     fetchFunc
 	activeTab tabID
 	width     int
 	height    int
@@ -133,6 +136,7 @@ func NewModel(cfg *config.Config, releaseCache *cache.Cache) Model {
 
 	m := Model{
 		cfg:          cfg,
+		fetch:        github.FetchReleasesWithFallback,
 		activeTab:    startTab,
 		status:       "Loading...",
 		releases:     newReleasesModel(),
@@ -169,7 +173,7 @@ func NewModel(cfg *config.Config, releaseCache *cache.Cache) Model {
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
-		fetchReleasesCmd(m.cfg.Repos, m.progress),
+		fetchReleasesCmd(m.fetch, m.cfg.Repos, m.progress),
 		tickCmd(),
 		m.chat.Init(),
 	}
@@ -197,6 +201,19 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(150*time.Millisecond, func(_ time.Time) tea.Msg {
 		return tickMsg{}
 	})
+}
+
+func (m Model) inputHasFocus() bool {
+	switch m.activeTab {
+	case tabReleases:
+		return m.releases.filtering
+	case tabRepos:
+		return m.repos.isFiltering()
+	case tabChat:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -283,7 +300,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progress = p
 		m.refreshing = true
 		m.status = fmt.Sprintf("Added %s, refreshing...", msg.repo)
-		return m, fetchReleasesCmd(m.cfg.Repos, m.progress)
+		return m, fetchReleasesCmd(m.fetch, m.cfg.Repos, m.progress)
 
 	case repoRemovedMsg:
 		staged := m.cfg.Clone()
@@ -349,24 +366,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Filter input in releases tab gets all key input (except quit/nav)
-		if m.activeTab == tabReleases && m.releases.filtering &&
-			!key.Matches(msg, keys.Quit) &&
-			!key.Matches(msg, keys.PrevTab) && !key.Matches(msg, keys.NextTab) &&
-			!key.Matches(msg, keys.Tab1) && !key.Matches(msg, keys.Tab2) &&
-			!key.Matches(msg, keys.Tab3) && !key.Matches(msg, keys.Tab4) {
+		if m.inputHasFocus() {
+			switch msg.Type {
+			case tea.KeyCtrlC:
+				return m, tea.Quit
+			case tea.KeyShiftTab:
+				m.activeTab = (m.activeTab - 1 + tabID(len(tabNames))) % tabID(len(tabNames))
+				return m, m.focusTab()
+			}
 			var cmd tea.Cmd
-			m.releases, cmd = m.releases.Update(msg)
-			return m, cmd
-		}
-
-		// Chat tab gets all key input when focused (except global/nav keys)
-		if m.activeTab == tabChat && !key.Matches(msg, keys.Quit) &&
-			!key.Matches(msg, keys.PrevTab) && !key.Matches(msg, keys.NextTab) &&
-			!key.Matches(msg, keys.Tab1) && !key.Matches(msg, keys.Tab2) &&
-			!key.Matches(msg, keys.Tab3) && !key.Matches(msg, keys.Tab4) {
-			var cmd tea.Cmd
-			m.chat, cmd = m.chat.Update(msg)
+			switch m.activeTab {
+			case tabReleases:
+				m.releases, cmd = m.releases.Update(msg)
+			case tabRepos:
+				m.repos, cmd = m.repos.Update(msg)
+			case tabChat:
+				m.chat, cmd = m.chat.Update(msg)
+			}
 			return m, cmd
 		}
 
@@ -380,7 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.progress = p
 			m.refreshing = true
 			m.status = "Refreshing..."
-			return m, fetchReleasesCmd(m.cfg.Repos, m.progress)
+			return m, fetchReleasesCmd(m.fetch, m.cfg.Repos, m.progress)
 
 		case key.Matches(msg, keys.AddRepo):
 			m.addModal = newAddModalModel()
@@ -645,7 +661,7 @@ func (m *Model) focusTab() tea.Cmd {
 
 const maxConcurrentFetches = 8
 
-func fetchReleasesCmd(repos []string, progress *loadingProgress) tea.Cmd {
+func fetchReleasesCmd(fetch fetchFunc, repos []string, progress *loadingProgress) tea.Cmd {
 	return func() tea.Msg {
 		if len(repos) == 0 {
 			return releasesLoadedMsg{}
@@ -670,7 +686,7 @@ func fetchReleasesCmd(repos []string, progress *loadingProgress) tea.Cmd {
 
 				progress.current.Store(r)
 
-				releases, err := github.FetchReleasesWithFallback(r)
+				releases, err := fetch(r)
 
 				mu.Lock()
 				if err != nil {
