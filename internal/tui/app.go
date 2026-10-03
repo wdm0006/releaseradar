@@ -194,6 +194,19 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+func (m Model) inputHasFocus() bool {
+	switch m.activeTab {
+	case tabReleases:
+		return m.releases.filtering
+	case tabRepos:
+		return m.repos.isFiltering()
+	case tabChat:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -343,24 +356,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Filter input in releases tab gets all key input (except quit/nav)
-		if m.activeTab == tabReleases && m.releases.filtering &&
-			!key.Matches(msg, keys.Quit) &&
-			!key.Matches(msg, keys.PrevTab) && !key.Matches(msg, keys.NextTab) &&
-			!key.Matches(msg, keys.Tab1) && !key.Matches(msg, keys.Tab2) &&
-			!key.Matches(msg, keys.Tab3) && !key.Matches(msg, keys.Tab4) {
+		if m.inputHasFocus() {
+			switch msg.Type {
+			case tea.KeyCtrlC:
+				return m, tea.Quit
+			case tea.KeyShiftTab:
+				m.activeTab = (m.activeTab - 1 + tabID(len(tabNames))) % tabID(len(tabNames))
+				return m, m.focusTab()
+			}
 			var cmd tea.Cmd
-			m.releases, cmd = m.releases.Update(msg)
-			return m, cmd
-		}
-
-		// Chat tab gets all key input when focused (except global/nav keys)
-		if m.activeTab == tabChat && !key.Matches(msg, keys.Quit) &&
-			!key.Matches(msg, keys.PrevTab) && !key.Matches(msg, keys.NextTab) &&
-			!key.Matches(msg, keys.Tab1) && !key.Matches(msg, keys.Tab2) &&
-			!key.Matches(msg, keys.Tab3) && !key.Matches(msg, keys.Tab4) {
-			var cmd tea.Cmd
-			m.chat, cmd = m.chat.Update(msg)
+			switch m.activeTab {
+			case tabReleases:
+				m.releases, cmd = m.releases.Update(msg)
+			case tabRepos:
+				m.repos, cmd = m.repos.Update(msg)
+			case tabChat:
+				m.chat, cmd = m.chat.Update(msg)
+			}
 			return m, cmd
 		}
 
