@@ -26,9 +26,12 @@ type reposModel struct {
 	repos    []string
 	releases []github.Release
 	repoInfo map[string]github.RepoInfo
-	width    int
-	height   int
-	focused  int // 0 = list, 1 = detail
+	// fetchErrs and infoErrs hold the latest failure per repo.
+	fetchErrs map[string]string
+	infoErrs  map[string]string
+	width     int
+	height    int
+	focused   int // 0 = list, 1 = detail
 }
 
 func newReposModel(repos []string) reposModel {
@@ -67,6 +70,7 @@ func newReposModel(repos []string) reposModel {
 		detail:   vp,
 		repos:    repos,
 		repoInfo: make(map[string]github.RepoInfo),
+		infoErrs: make(map[string]string),
 	}
 }
 
@@ -115,9 +119,24 @@ func (m reposModel) setReleases(releases []github.Release) reposModel {
 	return m
 }
 
+func (m reposModel) setFetchErrors(errs []fetchError) reposModel {
+	m.fetchErrs = make(map[string]string, len(errs))
+	for _, e := range errs {
+		m.fetchErrs[e.repo] = e.msg
+	}
+	if sel := m.selectedRepo(); sel != "" {
+		m.detail.SetContent(m.renderRepoDetail(sel))
+		m.detail.GotoTop()
+	}
+	return m
+}
+
 func (m reposModel) setRepoInfo(repo string, info github.RepoInfo, err error) reposModel {
 	if err == nil {
 		m.repoInfo[repo] = info
+		delete(m.infoErrs, repo)
+	} else {
+		m.infoErrs[repo] = err.Error()
 	}
 	if sel := m.selectedRepo(); sel == repo {
 		m.detail.SetContent(m.renderRepoDetail(repo))
@@ -191,6 +210,15 @@ func (m reposModel) renderRepoDetail(repo string) string {
 	b.WriteString(releaseNameStyle.Render(repo))
 	b.WriteString("\n")
 
+	errStyle := lipgloss.NewStyle().Foreground(colorError)
+	if msg, ok := m.fetchErrs[repo]; ok {
+		b.WriteString("\n")
+		b.WriteString(errStyle.Bold(true).Render("Release fetch failed"))
+		b.WriteString("\n")
+		b.WriteString(errStyle.Render(msg))
+		b.WriteString("\n")
+	}
+
 	if info, ok := m.repoInfo[repo]; ok {
 		if info.Description != "" {
 			b.WriteString(metaValueStyle.Render(info.Description))
@@ -237,6 +265,12 @@ func (m reposModel) renderRepoDetail(repo string) string {
 			b.WriteString(lipgloss.NewStyle().Foreground(colorError).Bold(true).Render("ARCHIVED"))
 			b.WriteString("\n")
 		}
+	} else if msg, failed := m.infoErrs[repo]; failed {
+		b.WriteString("\n")
+		b.WriteString(errStyle.Bold(true).Render("Repository info failed"))
+		b.WriteString("\n")
+		b.WriteString(errStyle.Render(msg))
+		b.WriteString("\n")
 	} else {
 		b.WriteString("\n")
 		b.WriteString(progressRepoStyle.Render("Loading repository info..."))
