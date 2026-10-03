@@ -35,7 +35,12 @@ var tabNames = []string{"Releases", "Repositories", "AI Summary", "Chat"}
 // Messages
 type releasesLoadedMsg struct {
 	releases []github.Release
-	errors   []string
+	errors   []fetchError
+}
+
+type fetchError struct {
+	repo string
+	msg  string
 }
 
 type repoInfoLoadedMsg struct {
@@ -242,6 +247,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.allReleases = merged
 		m.releases = m.releases.setReleases(merged)
 		m.repos = m.repos.setReleases(merged)
+		m.repos = m.repos.setFetchErrors(msg.errors)
 		m.chat = m.chat.setReleases(merged)
 		status := fmt.Sprintf("Loaded %d releases from %d repos", len(merged), len(m.cfg.Repos))
 		if len(msg.errors) > 0 {
@@ -696,10 +702,10 @@ func fetchReleasesCmd(fetch fetchFunc, repos []string, progress *loadingProgress
 		wg.Wait()
 
 		var allReleases []github.Release
-		var errors []string
-		for _, r := range results {
+		var errors []fetchError
+		for i, r := range results {
 			if r.err != "" {
-				errors = append(errors, r.err)
+				errors = append(errors, fetchError{repo: repos[i], msg: r.err})
 			} else {
 				allReleases = append(allReleases, r.releases...)
 			}

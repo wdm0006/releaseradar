@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	tea "github.com/charmbracelet/bubbletea"
 	"os"
 	"path/filepath"
@@ -199,6 +200,63 @@ func TestRepoRemovedSuccessPrunesReleases(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("successful removal should return a cache-save command")
+	}
+}
+
+func selectedDetail(m Model) string {
+	return ansiRE.ReplaceAllString(m.repos.renderRepoDetail(m.repos.selectedRepo()), "")
+}
+
+func TestFetchErrorShownInRepoDetail(t *testing.T) {
+	isolateConfig(t)
+	m := newTestModel([]string{"a/ok", "b/bad"}, nil)
+	m = updateModel(t, m, releasesLoadedMsg{errors: []fetchError{
+		{repo: "b/bad", msg: "b/bad: GitHub API rate limit exceeded (resets at 11:30)"},
+	}})
+	if !strings.Contains(m.status, "(1 errors)") {
+		t.Errorf("status = %q, want error count suffix", m.status)
+	}
+	if got := selectedDetail(m); strings.Contains(got, "rate limit") {
+		t.Errorf("a/ok detail shows another repo's error:\n%s", got)
+	}
+	m.repos.list.Select(1)
+	got := selectedDetail(m)
+	if !strings.Contains(got, "b/bad: GitHub API rate limit exceeded (resets at 11:30)") {
+		t.Errorf("detail missing fetch error:\n%s", got)
+	}
+
+	m = updateModel(t, m, releasesLoadedMsg{})
+	if got := selectedDetail(m); strings.Contains(got, "rate limit") {
+		t.Errorf("error persisted after a clean refresh:\n%s", got)
+	}
+}
+
+func TestRepoInfoErrorShownInsteadOfLoading(t *testing.T) {
+	isolateConfig(t)
+	m := newTestModel([]string{"a/one"}, nil)
+	if got := selectedDetail(m); got != "" && !strings.Contains(got, "Loading repository info...") {
+		t.Fatalf("in-flight state lost:\n%s", got)
+	}
+	m.repos.detail.SetContent(m.repos.renderRepoDetail("a/one"))
+	if got := selectedDetail(m); !strings.Contains(got, "Loading repository info...") {
+		t.Fatalf("expected loading state before result:\n%s", got)
+	}
+
+	m = updateModel(t, m, repoInfoLoadedMsg{repo: "a/one", err: errors.New("a/one: not found")})
+	got := selectedDetail(m)
+	if strings.Contains(got, "Loading repository info...") {
+		t.Errorf("failed fetch still shows loading:\n%s", got)
+	}
+	if !strings.Contains(got, "a/one: not found") {
+		t.Errorf("detail missing repo-info error:\n%s", got)
+	}
+	if view := ansiRE.ReplaceAllString(m.repos.detail.View(), ""); !strings.Contains(view, "a/one: not found") {
+		t.Errorf("rendered pane missing error:\n%s", view)
+	}
+
+	m = updateModel(t, m, repoInfoLoadedMsg{repo: "a/one", info: github.RepoInfo{Description: "desc"}})
+	if got := selectedDetail(m); strings.Contains(got, "not found") || !strings.Contains(got, "desc") {
+		t.Errorf("success did not clear error:\n%s", got)
 	}
 }
 
