@@ -126,6 +126,10 @@ func (m reposModel) setRepoInfo(repo string, info github.RepoInfo, err error) re
 	return m
 }
 
+func (m reposModel) isFiltering() bool {
+	return m.list.FilterState() == list.Filtering
+}
+
 func (m reposModel) selectedRepo() string {
 	if item, ok := m.list.SelectedItem().(repoItem); ok {
 		return item.name
