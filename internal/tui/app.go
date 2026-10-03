@@ -81,9 +81,12 @@ type loadingProgress struct {
 	current atomic.Value // stores string
 }
 
+type fetchFunc func(repo string) ([]github.Release, error)
+
 // Model is the top-level Bubble Tea model
 type Model struct {
 	cfg       *config.Config
+	fetch     fetchFunc
 	activeTab tabID
 	width     int
 	height    int
@@ -128,6 +131,7 @@ func NewModel(cfg *config.Config, releaseCache *cache.Cache) Model {
 
 	m := Model{
 		cfg:          cfg,
+		fetch:        github.FetchReleasesWithFallback,
 		activeTab:    startTab,
 		status:       "Loading...",
 		releases:     newReleasesModel(),
@@ -164,7 +168,7 @@ func NewModel(cfg *config.Config, releaseCache *cache.Cache) Model {
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
-		fetchReleasesCmd(m.cfg.Repos, m.progress),
+		fetchReleasesCmd(m.fetch, m.cfg.Repos, m.progress),
 		tickCmd(),
 		m.chat.Init(),
 	}
@@ -290,7 +294,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progress = p
 		m.refreshing = true
 		m.status = fmt.Sprintf("Added %s, refreshing...", msg.repo)
-		return m, fetchReleasesCmd(m.cfg.Repos, m.progress)
+		return m, fetchReleasesCmd(m.fetch, m.cfg.Repos, m.progress)
 
 	case repoRemovedMsg:
 		staged := m.cfg.Clone()
@@ -386,7 +390,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.progress = p
 			m.refreshing = true
 			m.status = "Refreshing..."
-			return m, fetchReleasesCmd(m.cfg.Repos, m.progress)
+			return m, fetchReleasesCmd(m.fetch, m.cfg.Repos, m.progress)
 
 		case key.Matches(msg, keys.AddRepo):
 			m.addModal = newAddModalModel()
@@ -651,7 +655,7 @@ func (m *Model) focusTab() tea.Cmd {
 
 const maxConcurrentFetches = 8
 
-func fetchReleasesCmd(repos []string, progress *loadingProgress) tea.Cmd {
+func fetchReleasesCmd(fetch fetchFunc, repos []string, progress *loadingProgress) tea.Cmd {
 	return func() tea.Msg {
 		if len(repos) == 0 {
 			return releasesLoadedMsg{}
@@ -676,7 +680,7 @@ func fetchReleasesCmd(repos []string, progress *loadingProgress) tea.Cmd {
 
 				progress.current.Store(r)
 
-				releases, err := github.FetchReleasesWithFallback(r)
+				releases, err := fetch(r)
 
 				mu.Lock()
 				if err != nil {
